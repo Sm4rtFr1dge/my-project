@@ -2,20 +2,11 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
+  * @brief          : Lab 8 Task 3 - SPI Gyroscope (Corrected)
   ******************************************************************************
   */
 /* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
@@ -26,32 +17,10 @@
 #include <stdio.h>
 /* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
-
 SPI_HandleTypeDef hspi1;
-
 UART_HandleTypeDef huart1;
-
-/* USER CODE BEGIN PV */
-
-
-/* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -59,39 +28,31 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
+
 /* USER CODE BEGIN PFP */
-void gyro_init();
-
-
+void gyro_init(void);
+void gyro_set_ctrl_reg4(void);
+void reader(uint8_t reg_addr, uint8_t *rx_data);
+int16_t read_16bit(uint8_t high_byte, uint8_t low_byte);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/* USER CODE BEGIN 0 */
 
-// Corrected SPI Reader Function
+// Corrected Full-Duplex SPI Reader
 void reader(uint8_t reg_addr, uint8_t *rx_data) {
-    // Array to hold [Address | Dummy Byte]
-    uint8_t tx_buffer[2] = {reg_addr, 0x00}; 
-    uint8_t rx_buffer[2] = {0x00, 0x00};
+    uint8_t tx_buffer[2] = {reg_addr, 0x00}; // Send Address, then Dummy Byte
+    uint8_t rx_buffer[2] = {0x00, 0x00};     // Receive Garbage, then Actual Data
 
-    // Pull CS Low
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-    
-    // Transmit Address and Receive Data Simultaneously
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET); // CS Low
     HAL_SPI_TransmitReceive(&hspi1, tx_buffer, rx_buffer, 2, HAL_MAX_DELAY);
-    
-    // Pull CS High
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);   // CS High
 
-    // The first byte received is garbage (during address transmission).
-    // The second byte is the actual data.
-    *rx_data = rx_buffer[1];
+    *rx_data = rx_buffer[1]; // Extract the valid data byte
 }
 
 #define CTRL_REG1 0x20
-#define CTRL_REG1_VAL 0b00001111 // PD = 1, Xen/Yen/Zen enabled
-
+#define CTRL_REG1_VAL 0b00001111 // PD = 1 (Power on), Xen/Yen/Zen enabled
 void gyro_init(void) 
 {
     uint8_t tx[2] = {CTRL_REG1, CTRL_REG1_VAL};
@@ -101,8 +62,7 @@ void gyro_init(void)
 }
 
 #define CTRL_REG4 0x23
-#define CTRL_REG4_VAL 0b00000000 // FS = 250 dps
-
+#define CTRL_REG4_VAL 0b00000000 // FS [1:0] = 00 => +/- 250 dps
 void gyro_set_ctrl_reg4(void)
 {
     uint8_t tx[2] = {CTRL_REG4, CTRL_REG4_VAL};
@@ -111,11 +71,10 @@ void gyro_set_ctrl_reg4(void)
     HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
 }
 
-// Corrected 16-bit combiner function
+// Corrected 16-bit combining logic (Removed | 0x8000 bug)
 int16_t read_16bit(uint8_t high_byte, uint8_t low_byte) {
     return (int16_t)((high_byte << 8) | low_byte);
 }
-
 /* USER CODE END 0 */
 
 /**
@@ -124,21 +83,29 @@ int16_t read_16bit(uint8_t high_byte, uint8_t low_byte) {
   */
 int main(void)
 {
-  /* MCU Configuration and Initialization */
+  /* MCU Configuration */
   HAL_Init();
   SystemClock_Config();
+  
+  /* Initialize Peripherals */
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
 
   /* USER CODE BEGIN 2 */
-  // Initialize Sensor
-  gyro_init();
-  gyro_set_ctrl_reg4(); // Ensure resolution is set to +/- 250 dps
   
-  // Wait for sensor to stabilize
+  // Setup the Sensor
+  gyro_init();
+  gyro_set_ctrl_reg4();
+  
+  // Give the sensor 100ms to wake up properly
   HAL_Delay(100); 
+
+  // Send a startup message to confirm UART is working
+  char start_msg[] = "System Initialized! Starting SPI Reads...\r\n";
+  HAL_UART_Transmit(&huart1, (uint8_t*)start_msg, sizeof(start_msg)-1, HAL_MAX_DELAY);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,30 +127,38 @@ int main(void)
     reader(0x80 | 0x26, &temp_raw);
 
     // Combine Bytes into Signed 16-bit integers
-    int temp_int = (int)stemp_display;
-    int x_int = (int)x_dps;
-    int y_int = (int)y_dps;
-    int z_int = (int)z_dps;
+    int16_t x = read_16bit(xH, xL);
+    int16_t y = read_16bit(yH, yL);
+    int16_t z = read_16bit(zH, zL);
 
-    // Print using %d (integers) instead of %f
+    // Convert to float first to do the proper math
+    float x_dps = x * 0.00875f;
+    float y_dps = y * 0.00875f;
+    float z_dps = z * 0.00875f;
+    float temp_display = -(temp_raw) + 43.0f;
+
+    // SAFE PRINTING: Cast floats to integers for snprintf 
+    // This avoids the "Blank Screen" bug caused by disabled %f formatting
+    int int_temp = (int)temp_display;
+    int int_x = (int)x_dps;
+    int int_y = (int)y_dps;
+    int int_z = (int)z_dps;
+
     char buffer[100];
-    int n = snprintf(buffer, sizeof(buffer), "Temp: %d | X: %d, Y: %d, Z: %d\r\n", 
-                     temp_int, x_int, y_int, z_int);
+    int n = snprintf(buffer, sizeof(buffer), "Temp: %d C | X: %d, Y: %d, Z: %d (dps)\r\n", 
+                     int_temp, int_x, int_y, int_z);
                      
     if (n > 0) {
         HAL_UART_Transmit(&huart1, (uint8_t*)buffer, n, HAL_MAX_DELAY);
-    
-    // Delay for readability in terminal
-    HAL_Delay(500);
-    /* USER CODE END 3 */
+    }
+
+    HAL_Delay(500); // 500ms delay between readings
   }
-}
   /* USER CODE END 3 */
-  
+}
 
 /**
   * @brief System Clock Configuration
-  * @retval None
   */
 void SystemClock_Config(void) 
 {
@@ -191,9 +166,6 @@ void SystemClock_Config(void)
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
@@ -207,8 +179,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -231,19 +201,9 @@ void SystemClock_Config(void)
 
 /**
   * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_I2C1_Init(void)
 {
-
-  /* USER CODE BEGIN I2C1_Init 0 */
-
-  /* USER CODE END I2C1_Init 0 */
-
-  /* USER CODE BEGIN I2C1_Init 1 */
-
-  /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.Timing = 0x2000090E;
   hi2c1.Init.OwnAddress1 = 0;
@@ -257,42 +217,21 @@ static void MX_I2C1_Init(void)
   {
     Error_Handler();
   }
-
-  /** Configure Analogue filter
-  */
   if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
   {
     Error_Handler();
   }
-
-  /** Configure Digital filter
-  */
   if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
-
 }
 
 /**
   * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_SPI1_Init(void)
 {
-
-  /* USER CODE BEGIN SPI1_Init 0 */
-
-  /* USER CODE END SPI1_Init 0 */
-
-  /* USER CODE BEGIN SPI1_Init 1 */
-
-  /* USER CODE END SPI1_Init 1 */
-  /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -311,27 +250,13 @@ static void MX_SPI1_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SPI1_Init 2 */
-
-  /* USER CODE END SPI1_Init 2 */
-
 }
 
 /**
   * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_USART1_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -346,23 +271,14 @@ static void MX_USART1_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
 }
 
 /**
   * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
@@ -376,20 +292,14 @@ static void MX_GPIO_Init(void)
                           |LD7_Pin|LD9_Pin|LD10_Pin|LD8_Pin
                           |LD6_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT1_Pin
-                           MEMS_INT2_Pin */
-  GPIO_InitStruct.Pin = DRDY_Pin|MEMS_INT3_Pin|MEMS_INT4_Pin|MEMS_INT1_Pin
-                          |MEMS_INT2_Pin;
+  /*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT1_Pin MEMS_INT2_Pin */
+  GPIO_InitStruct.Pin = DRDY_Pin|MEMS_INT3_Pin|MEMS_INT4_Pin|MEMS_INT1_Pin|MEMS_INT2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : CS_I2C_SPI_Pin LD4_Pin LD3_Pin LD5_Pin
-                           LD7_Pin LD9_Pin LD10_Pin LD8_Pin
-                           LD6_Pin */
-  GPIO_InitStruct.Pin = CS_I2C_SPI_Pin|LD4_Pin|LD3_Pin|LD5_Pin
-                          |LD7_Pin|LD9_Pin|LD10_Pin|LD8_Pin
-                          |LD6_Pin;
+  /*Configure GPIO pins : CS_I2C_SPI_Pin LD4_Pin LD3_Pin LD5_Pin LD7_Pin LD9_Pin LD10_Pin LD8_Pin LD6_Pin */
+  GPIO_InitStruct.Pin = CS_I2C_SPI_Pin|LD4_Pin|LD3_Pin|LD5_Pin|LD7_Pin|LD9_Pin|LD10_Pin|LD8_Pin|LD6_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -400,43 +310,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
-
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
-#ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+
+#ifdef  USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
