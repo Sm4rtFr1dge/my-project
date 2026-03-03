@@ -14,19 +14,15 @@
 // Allocation bitmap: 0 = free, 1 = used
 
 // Add you code below
-#define HEAP_SIZE   1024  // Total bytes for our custom heap (1 KB)
-#define BLOCK_SIZE  16    // Each block is 16 bytes
-#define NUM_BLOCKS  (HEAP_SIZE / BLOCK_SIZE)
-
 #define FREE_BLOCK  0x00
 #define USED_BODY   0xFF
 
 static uint8_t heap_memory[HEAP_SIZE];
 
-static uint8_t block_info[NUM_BLOCKS];
+static uint8_t block_info[BLOCK_COUNT];
 
 void heap_init(void) {
-    for (int i = 0; i < NUM_BLOCKS; i++) {
+    for (int i = 0; i < BLOCK_COUNT; i++) {
         block_info[i] = FREE_BLOCK;
     }
 }
@@ -42,7 +38,7 @@ void* heap_alloc(size_t size) {
     size_t consecutive_free = 0;
     int start_index = -1;
 
-    for (int i = 0; i < NUM_BLOCKS; i++) {
+    for (int i = 0; i < BLOCK_COUNT; i++) {
         if (block_info[i] == FREE_BLOCK) {
             if (consecutive_free == 0) start_index = i;
             consecutive_free++;
